@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -x
 # 
 # k8s-cluster-export
 # Modified:  2019-10-31
@@ -255,16 +255,16 @@ function show_diff {
 function remove_yaml_value {
   arr=("$@")
   for i in "${arr[@]}"; do
-    yq d -i $RESULT $i
+    yq -iy "del(.$i)" $RESULT 
   done
 }
 
 function change_namespace {
-  if [ -n "$NEW_NAMESPACE" ]; then
+  if [ -n "$NEW_N5AMESPACE" ]; then
     if [ $TYPE == "pv" ]; then
-      yq w -i $RESULT spec.claimRef.namespace $NEW_NAMESPACE
+      yq -iy ".spec.claimRef.namespace=$NEW_NAMESPACE" $RESULT 
     else
-      yq w -i $RESULT metadata.namespace $NEW_NAMESPACE
+      yq -iy ".metadata.namespace=$NEW_NAMESPACE" $RESULT 
     fi
   fi
 }
@@ -272,16 +272,16 @@ function change_namespace {
 function set_targets {
   if [ "$1" = "pv" ] && [ -n "$NAMESPACE" ]; then
     # only export PVs for correspoinding PVCs
-    targets=("${pv_targets[@]}")
+    targets=(${pv_targets[@]})
   elif [[ " ${target_files[@]} " =~ "$1" ]]; then
     targets=()
     while IFS= read -r line; do
-      targets+=("$line")
+      targets+=($line)
     done <$1
   elif [ -n "$NAMESPACE" ]; then
-    targets=($(${KUBECTL} get $1 -n ${NAMESPACE} --no-headers -o=custom-columns=NAME:.metadata.name ))
+    targets=($(${KUBECTL} get $1 -n ${NAMESPACE} --no-headers -o=custom-columns=NAME:.metadata.name | tr -d \"))
   else
-    targets=($(${KUBECTL} get $1 --no-headers -o=custom-columns=NAME:.metadata.name ))
+    targets=($(${KUBECTL} get $1 --no-headers -o=custom-columns=NAME:.metadata.name | tr -d \"))
   fi
 }
 
@@ -289,11 +289,11 @@ function set_targets {
 function remove_status {
   # reset status
   if [[ " (pvc deploy quota limits job) " =~ " $TYPE " ]]; then
-    yq d -i $RESULT status ; echo 'status: {}' >> $RESULT
+    yq -iy 'del(.status)' $RESULT ; echo 'status: {}' >> $RESULT
   elif [ $TYPE == "sts" ]; then
-    yq d -i $RESULT status ; echo -e 'status:\n  replicas: 0' >> $RESULT
+    yq -iy 'del(.status)' $RESULT ; echo -e 'status:\n  replicas: 0' >> $RESULT
   elif [ $TYPE == "svc" ] || [ $TYPE == "ing" ]; then
-    yq d -i $RESULT status ; echo -e 'status:\n  loadBalancer: {}' >> $RESULT
+    yq -iy 'del(.status)' $RESULT ; echo -e 'status:\n  loadBalancer: {}' >> $RESULT
   fi
 }
 
@@ -311,6 +311,8 @@ function export_resource {
     TARGET_FOLDER="$SOURCE/CLUSTER/$2_$1"
   fi
 
+  printf "%s \n" ${targets[@]}
+
   for i in "${targets[@]}"; do
     RAW=$TARGET_FOLDER'/'$TYPE'_'$i'_raw.yaml'
     RESULT=$TARGET_FOLDER'/'$TYPE'_'$i'.yaml'
@@ -327,10 +329,10 @@ function export_resource {
       remove_yaml_value "${remove[@]}"
       # only export PVs for correspoinding PVCs
       if [ "$1" = "pvc" ]; then
-        pv_targets+=($(yq r $RESULT spec.volumeName))
+        pv_targets+=($(yq '.spec.volumeName' $RESULT | tr -d \"))
       # change generation to 1 for sts
       elif [ "$1" = "sts" ]; then
-        yq w -i $RESULT metadata.generation 1
+        yq -iy '.metadata.generation=1' $RESULT 
       fi
       change_namespace
       remove_status
@@ -343,7 +345,6 @@ function export_resource {
 function pvc {
   # get persistent volume claims
   remove=(
-    "metadata.annotations.\"pv.kubernetes.io/bound-by-controller\""
     "metadata.annotations.\"pv.kubernetes.io/bind-completed\""
     ${objectmeta_v1[@]}
   )
@@ -396,7 +397,7 @@ function svc {
   remove=(
     ${objectmeta_v1[@]}
     "spec.clusterIP"
-    "spec.ports.*.nodePort"
+#    "spec.ports.nodePort"
   )
   export_resource "svc" "07" "${remove[@]}"
 }
